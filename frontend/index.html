@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en" class="govuk-template">
+<head>
+  <meta charset="utf-8">
+  <title>Task manager - HMCTS</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0c0c">
+  <link rel="stylesheet"
+        href="https://unpkg.com/govuk-frontend@5.7.1/dist/govuk/govuk-frontend.min.css">
+  <style>
+    .hmcts-status-cell { white-space: nowrap; }
+    .hmcts-task-title--done { text-decoration: line-through; color: #505a5f; }
+    .hmcts-actions { display: flex; gap: 8px; align-items: center; }
+    .hmcts-actions select { min-width: 10rem; }
+    .hmcts-due--overdue { color: #d4351c; font-weight: 700; }
+  </style>
+</head>
+<body class="govuk-template__body">
+  <script>document.body.className += ' js-enabled' + ('noModule' in HTMLScriptElement.prototype ? ' govuk-frontend-supported' : '');</script>
+
+  <a href="#main-content" class="govuk-skip-link" data-module="govuk-skip-link">Skip to main content</a>
+
+  <header class="govuk-header" role="banner" data-module="govuk-header">
+    <div class="govuk-header__container govuk-width-container">
+      <div class="govuk-header__logo">
+        <a href="/" class="govuk-header__link govuk-header__link--homepage">
+          <span class="govuk-header__logotype-text">HMCTS</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <div class="govuk-width-container">
+    <main class="govuk-main-wrapper" id="main-content" role="main">
+
+      <h1 class="govuk-heading-xl">Task manager</h1>
+
+      <div id="error-banner" class="govuk-error-summary" data-module="govuk-error-summary" hidden>
+        <div role="alert">
+          <h2 class="govuk-error-summary__title">There is a problem</h2>
+          <div class="govuk-error-summary__body">
+            <ul class="govuk-list govuk-error-summary__list" id="error-list"></ul>
+          </div>
+        </div>
+      </div>
+
+      <h2 class="govuk-heading-m">Create a task</h2>
+
+      <form id="create-form" class="govuk-!-margin-bottom-8" novalidate>
+        <div class="govuk-form-group">
+          <label class="govuk-label" for="title">Title</label>
+          <input class="govuk-input" id="title" name="title" type="text" required maxlength="200">
+        </div>
+
+        <div class="govuk-form-group">
+          <label class="govuk-label" for="description">Description (optional)</label>
+          <textarea class="govuk-textarea" id="description" name="description" rows="3" maxlength="2000"></textarea>
+        </div>
+
+        <div class="govuk-form-group">
+          <label class="govuk-label" for="status">Status</label>
+          <select class="govuk-select" id="status" name="status">
+            <option value="TODO" selected>To do</option>
+            <option value="IN_PROGRESS">In progress</option>
+            <option value="DONE">Done</option>
+          </select>
+        </div>
+
+        <div class="govuk-form-group">
+          <label class="govuk-label" for="dueDate">Due date and time</label>
+          <div id="dueDate-hint" class="govuk-hint">For example, 31 3 2026 14:30</div>
+          <input class="govuk-input" id="dueDate" name="dueDate" type="datetime-local" required>
+        </div>
+
+        <button class="govuk-button" data-module="govuk-button" type="submit">
+          Create task
+        </button>
+      </form>
+
+      <h2 class="govuk-heading-m">All tasks</h2>
+
+      <div id="loading" class="govuk-!-margin-bottom-4">Loading tasks…</div>
+
+      <div id="empty" class="govuk-inset-text" hidden>
+        No tasks yet. Create one using the form above.
+      </div>
+
+      <table class="govuk-table" id="task-table" hidden>
+        <thead class="govuk-table__head">
+          <tr class="govuk-table__row">
+            <th scope="col" class="govuk-table__header">Title</th>
+            <th scope="col" class="govuk-table__header">Status</th>
+            <th scope="col" class="govuk-table__header">Due</th>
+            <th scope="col" class="govuk-table__header">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="govuk-table__body" id="task-body"></tbody>
+      </table>
+
+    </main>
+  </div>
+
+  <footer class="govuk-footer" role="contentinfo">
+    <div class="govuk-width-container">
+      <div class="govuk-footer__meta">
+        <div class="govuk-footer__meta-item govuk-footer__meta-item--grow">
+          <span class="govuk-footer__licence-description">
+            HMCTS Developer Technical Test
+          </span>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script src="https://unpkg.com/govuk-frontend@5.7.1/dist/govuk/govuk-frontend.min.js"></script>
+  <script>window.GOVUKFrontend.initAll();</script>
+
+  <script>
+    const API = '/api/v1/tasks';
+    const tbody = document.getElementById('task-body');
+    const table = document.getElementById('task-table');
+    const empty = document.getElementById('empty');
+    const loading = document.getElementById('loading');
+    const form = document.getElementById('create-form');
+    const errorBanner = document.getElementById('error-banner');
+    const errorList = document.getElementById('error-list');
+
+    const STATUS_LABEL = { TODO: 'To do', IN_PROGRESS: 'In progress', DONE: 'Done' };
+    const STATUS_TAG = { TODO: 'govuk-tag--blue', IN_PROGRESS: 'govuk-tag--yellow', DONE: 'govuk-tag--green' };
+
+    function showErrors(messages) {
+      errorList.innerHTML = '';
+      messages.forEach(m => {
+        const li = document.createElement('li');
+        li.textContent = m;
+        errorList.appendChild(li);
+      });
+      errorBanner.hidden = false;
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function clearErrors() {
+      errorBanner.hidden = true;
+      errorList.innerHTML = '';
+    }
+
+    function fmtDateTime(iso) {
+      const d = new Date(iso);
+      return d.toLocaleString('en-GB', {
+        day: '2-digit', month: 'short', year: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+      });
+    }
+
+    function isOverdue(task) {
+      return task.status !== 'DONE' && new Date(task.dueDate) < new Date();
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[c]));
+    }
+
+    function renderTasks(tasks) {
+      loading.hidden = true;
+      tbody.innerHTML = '';
+
+      if (!tasks.length) {
+        table.hidden = true;
+        empty.hidden = false;
+        return;
+      }
+      empty.hidden = true;
+      table.hidden = false;
+
+      tasks.forEach(task => {
+        const tr = document.createElement('tr');
+        tr.className = 'govuk-table__row';
+        const overdue = isOverdue(task);
+
+        tr.innerHTML = `
+          <td class="govuk-table__cell">
+            <div class="${task.status === 'DONE' ? 'hmcts-task-title--done' : ''}">
+              <strong>${escapeHtml(task.title)}</strong>
+            </div>
+            ${task.description ? `<div class="govuk-hint govuk-!-margin-bottom-0">${escapeHtml(task.description)}</div>` : ''}
+          </td>
+          <td class="govuk-table__cell hmcts-status-cell">
+            <strong class="govuk-tag ${STATUS_TAG[task.status]}">${STATUS_LABEL[task.status]}</strong>
+            ${overdue ? '<br><strong class="govuk-tag govuk-tag--red govuk-!-margin-top-1">Overdue</strong>' : ''}
+          </td>
+          <td class="govuk-table__cell ${overdue ? 'hmcts-due--overdue' : ''}">
+            ${fmtDateTime(task.dueDate)}
+          </td>
+          <td class="govuk-table__cell">
+            <div class="hmcts-actions">
+              <select class="govuk-select" data-id="${task.id}" aria-label="Change status">
+                ${Object.entries(STATUS_LABEL).map(([v, l]) =>
+                  `<option value="${v}" ${task.status === v ? 'selected' : ''}>${l}</option>`
+                ).join('')}
+              </select>
+              <button class="govuk-button govuk-button--warning govuk-!-margin-bottom-0"
+                      data-delete="${task.id}" type="button">Delete</button>
+            </div>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      tbody.querySelectorAll('select[data-id]').forEach(sel => {
+        sel.addEventListener('change', async e => {
+          await updateStatus(e.target.dataset.id, e.target.value);
+        });
+      });
+
+      tbody.querySelectorAll('button[data-delete]').forEach(btn => {
+        btn.addEventListener('click', async e => {
+          await deleteTask(e.target.dataset.delete);
+        });
+      });
+    }
+
+    async function loadTasks() {
+      clearErrors();
+      loading.hidden = false;
+      try {
+        const res = await fetch(API);
+        if (!res.ok) throw new Error(`Failed to load tasks (${res.status})`);
+        renderTasks(await res.json());
+      } catch (err) {
+        loading.hidden = true;
+        showErrors([err.message]);
+      }
+    }
+
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      clearErrors();
+
+      const title = form.title.value.trim();
+      const description = form.description.value.trim();
+      const status = form.status.value;
+      const dueDateRaw = form.dueDate.value;
+
+      const problems = [];
+      if (!title) problems.push('Enter a title.');
+      if (!dueDateRaw) problems.push('Enter a due date and time.');
+      if (problems.length) return showErrors(problems);
+
+      const payload = {
+        title,
+        description: description || null,
+        status,
+        dueDate: new Date(dueDateRaw).toISOString(),
+      };
+
+      try {
+        const res = await fetch(API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail ? JSON.stringify(body.detail) : `Create failed (${res.status})`);
+        }
+        form.reset();
+        loadTasks();
+      } catch (err) {
+        showErrors([err.message]);
+      }
+    });
+
+    async function updateStatus(id, status) {
+      clearErrors();
+      try {
+        const res = await fetch(`${API}/${id}/status`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status }),
+        });
+        if (!res.ok) throw new Error(`Update failed (${res.status})`);
+        loadTasks();
+      } catch (err) {
+        showErrors([err.message]);
+      }
+    }
+
+    async function deleteTask(id) {
+      if (!confirm('Delete this task?')) return;
+      clearErrors();
+      try {
+        const res = await fetch(`${API}/${id}`, { method: 'DELETE' });
+        if (!res.ok && res.status !== 204) throw new Error(`Delete failed (${res.status})`);
+        loadTasks();
+      } catch (err) {
+        showErrors([err.message]);
+      }
+    }
+
+    loadTasks();
+  </script>
+</body>
+</html>

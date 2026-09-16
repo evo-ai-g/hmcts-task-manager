@@ -1,0 +1,24 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: hmcts-task-manager:latest
+    container_name: hmcts-tasks
+    ports:
+      - "8002:8000"
+    environment:
+      DATABASE_URL: "sqlite:////app/data/tasks.db"
+      APP_NAME: "HMCTS Task Manager API"
+    volumes:
+      - tasks-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  tasks-data:
